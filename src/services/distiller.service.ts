@@ -17,19 +17,21 @@ export class DistillerService {
 
     const selectedByAgent: Record<string, ScoredMemory[]> = {};
 
-    const geminiApiKey = resolveApiKey();
-    const llmEnabled = process.env.LLM_SCORING_ENABLED === 'true' && geminiApiKey.length > 0 && !config.forceRuleOnly;
+    // OpenAI-compatible LLM config (same pattern as agent-smart-memo)
+    const llmBaseUrl = process.env.LLM_BASE_URL || 'http://localhost:8317/v1';
+    const llmApiKey = process.env.LLM_API_KEY || 'proxypal-local';
+    const llmModel = process.env.LLM_MODEL || 'gemini-2.5-flash';
+    const llmEnabled = process.env.LLM_SCORING_ENABLED === 'true' && !config.forceRuleOnly;
 
     let llmScorer: LLMScorerService | null = null;
     if (llmEnabled) {
       llmScorer = new LLMScorerService(
-        geminiApiKey,
-        process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+        { baseUrl: llmBaseUrl, apiKey: llmApiKey, model: llmModel },
         Number.parseInt(process.env.LLM_BATCH_SIZE || '10', 10),
       );
-      console.log(`🧠 LLM scoring enabled (${process.env.GEMINI_MODEL || 'gemini-2.5-flash'})`);
+      console.log(`🧠 LLM scoring enabled (${llmModel} via ${llmBaseUrl})`);
     } else {
-      console.log('📏 Rule-based scoring (set GEMINI_API_KEY + LLM_SCORING_ENABLED=true for LLM)');
+      console.log('📏 Rule-based scoring (set LLM_SCORING_ENABLED=true for LLM)');
     }
 
     for (const agent of config.agents) {
@@ -107,16 +109,4 @@ export class DistillerService {
 
 function truncate(text: string, length: number): string {
   return text.length > length ? `${text.slice(0, length - 3)}...` : text;
-}
-
-
-function resolveApiKey(): string {
-  const direct = (process.env.GEMINI_API_KEY || '').trim();
-  if (direct) return direct;
-
-  const fallback = (process.env.GOOGLE_API_KEY || '').trim();
-  if (fallback) return fallback;
-
-  // Optional fallback per owner note
-  return (process.env.OPENAI_API_KEY || '').trim();
 }

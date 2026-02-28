@@ -1,6 +1,30 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { AgentMemory, MemoryCategory, ScoredMemory } from '../types';
 import { scoreMemory } from './scorer.service';
+
+/**
+ * LLM Scorer Service — OpenAI-compatible API
+ * 
+ * Uses the same pattern as agent-smart-memo:
+ * - baseUrl/chat/completions (OpenAI-compatible endpoint)
+ * - Bearer token auth
+ * - Works with OpenClaw proxy at localhost:8317/v1
+ */
+
+interface LLMConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+interface OpenAIChatResponse {
+  choices: Array<{
+    message: { content: string; role: string };
+    finish_reason: string;
+    index: number;
+  }>;
+  model: string;
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+}
 
 const SCORING_PROMPT = `You are an AI Knowledge Quality Evaluator. Score each memory for its long-term value to an AI agent team.
 
@@ -39,13 +63,11 @@ const ALLOWED_CATEGORIES = new Set<MemoryCategory>([
 ]);
 
 export class LLMScorerService {
-  private genAI: GoogleGenerativeAI;
-  private model: string;
+  private config: LLMConfig;
   private batchSize: number;
 
-  constructor(apiKey: string, model = 'gemini-2.5-flash', batchSize = 10) {
-    this.genAI = new GoogleGenerativeAI(apiKey);
-    this.model = model;
+  constructor(config: LLMConfig, batchSize = 10) {
+    this.config = config;
     this.batchSize = Math.max(1, batchSize);
   }
 
@@ -69,22 +91,39 @@ export class LLMScorerService {
   }
 
   private async scoreSingleBatch(batch: AgentMemory[]): Promise<ScoredMemory[]> {
-    const model = this.genAI.getGenerativeModel({ model: this.model });
-
     const memoriesText = batch
       .map((m, idx) => `[${idx}] agent=${m.source_agent} ns=${m.namespace} | ${(m.text ?? '').slice(0, 500)}`)
       .join('\n\n');
 
     try {
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: `${SCORING_PROMPT}\n\nMemories to score:\n\n${memoriesText}` }] }],
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json',
+      const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.config.apiKey}`,
         },
+        body: JSON.stringify({
+          model: this.config.model,
+          messages: [
+            { role: 'system', content: SCORING_PROMPT },
+            { role: 'user', content: `Memories to score:\n\n${memoriesText}` },
+          ],
+          temperature: 0.1,
+        }),
       });
 
-      const responseText = result.response.text();
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`LLM API error: ${response.status} - ${errorText.slice(0, 200)}`);
+      }
+
+      const data = await response.json() as OpenAIChatResponse;
+      const responseText = data.choices?.[0]?.message?.content;
+
+      if (!responseText) {
+        throw new Error('No content in LLM response');
+      }
+
       const scores = this.parseScores(responseText);
 
       return batch.map((memory, idx) => {
@@ -105,7 +144,7 @@ export class LLMScorerService {
           category,
           tags: [category, 'llm-scored'],
           distilledText: llmScore.reasoning,
-          scoringMethod: 'llm',
+          scoringMethod: 'llm' as const,
           llmReasoning: llmScore.reasoning,
         };
       });
