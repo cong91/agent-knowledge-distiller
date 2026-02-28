@@ -104,6 +104,8 @@ export class QdrantService {
         qualityScore: memory.qualityScore,
         category: memory.category,
         tags: memory.tags,
+        scoringMethod: memory.scoringMethod,
+        llmReasoning: memory.llmReasoning,
       },
     }));
 

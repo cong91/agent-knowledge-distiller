@@ -14,6 +14,8 @@ export interface ScoredMemory extends AgentMemory {
   category: MemoryCategory;
   tags: string[];
   distilledText?: string; // LLM-summarized version
+  scoringMethod: 'rule' | 'llm';
+  llmReasoning?: string;
 }
 
 export type MemoryCategory =
@@ -35,6 +37,7 @@ export interface DistillConfig {
   categories: MemoryCategory[];
   dryRun?: boolean;
   createSnapshot?: boolean;
+  forceRuleOnly?: boolean;
 }
 
 export interface DistillReport {

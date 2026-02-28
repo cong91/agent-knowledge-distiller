@@ -23,6 +23,7 @@ export function buildDistillConfig(options: {
   maxPerAgent?: number;
   dryRun?: boolean;
   createSnapshot?: boolean;
+  forceRuleOnly?: boolean;
 }): DistillConfig {
   return {
     agents: options.agents && options.agents.length > 0 ? options.agents : DEFAULT_AGENTS,
@@ -31,5 +32,6 @@ export function buildDistillConfig(options: {
     categories: DEFAULT_CATEGORIES,
     dryRun: options.dryRun ?? false,
     createSnapshot: options.createSnapshot ?? false,
+    forceRuleOnly: options.forceRuleOnly ?? false,
   };
 }

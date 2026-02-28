@@ -3,14 +3,12 @@ import chalk from 'chalk';
 import { Command } from 'commander';
 import { DistillerService } from './services/distiller.service';
 import { QdrantService } from './services/qdrant.service';
-import { ScorerService } from './services/scorer.service';
 import { buildDistillConfig, DEFAULT_AGENTS } from './utils/config';
 
 const program = new Command();
 
 const qdrantService = new QdrantService();
-const scorerService = new ScorerService();
-const distillerService = new DistillerService(qdrantService, scorerService);
+const distillerService = new DistillerService(qdrantService);
 
 program
   .name('agent-knowledge-distiller')
@@ -25,7 +23,16 @@ program
   .option('--max-per-agent <n>', 'Max golden memories per agent (default: 100)', parseNumber)
   .option('--dry-run', 'Score and report without writing to golden collection', false)
   .option('--snapshot', 'Create snapshot after distill', false)
+  .option('--llm', 'Use LLM scoring (requires GEMINI_API_KEY)', false)
+  .option('--rule-only', 'Force rule-based scoring only', false)
   .action(async (options) => {
+    if (options.llm) {
+      process.env.LLM_SCORING_ENABLED = 'true';
+    }
+    if (options.ruleOnly) {
+      process.env.LLM_SCORING_ENABLED = 'false';
+    }
+
     const agents = options.agent ? [String(options.agent)] : DEFAULT_AGENTS;
 
     const config = buildDistillConfig({
@@ -34,6 +41,7 @@ program
       maxPerAgent: options.maxPerAgent,
       dryRun: options.dryRun,
       createSnapshot: options.snapshot,
+      forceRuleOnly: Boolean(options.ruleOnly),
     });
 
     const report = await distillerService.distill(config);
