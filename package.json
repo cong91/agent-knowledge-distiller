@@ -1,0 +1,27 @@
+{
+  "name": "@mrc2204/agent-knowledge-distiller",
+  "version": "1.0.0",
+  "description": "Extract and distill the best knowledge from AI agent memories stored in Qdrant",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "distill": "ts-node src/index.ts distill",
+    "snapshot": "ts-node src/index.ts snapshot",
+    "report": "ts-node src/index.ts report",
+    "dev": "ts-node src/index.ts"
+  },
+  "author": "MrC",
+  "license": "MIT",
+  "dependencies": {
+    "@qdrant/js-client-rest": "^1.13.0",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "chalk": "^5.4.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2",
+    "ts-node": "^10.9.2",
+    "@types/node": "^22.13.10"
+  }
+}
