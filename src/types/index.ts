@@ -41,15 +41,19 @@ export interface DistillConfig {
 }
 
 export interface DistillReport {
+  mode?: "full" | "incremental";
   timestamp: string;
   totalProcessed: number;
   totalKept: number;
   totalDiscarded: number;
+  totalNoiseDeleted?: number;
+  totalMarkedDistilled?: number;
   byAgent: Record<
     string,
     {
       processed: number;
       kept: number;
+      noiseCount?: number;
       topMemories: Array<{ text: string; score: number; category: string }>;
     }
   >;
