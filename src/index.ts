@@ -12,19 +12,19 @@ const distillerService = new DistillerService(qdrantService);
 
 program
   .name('agent-knowledge-distiller')
-  .description('Distill agent memories — keep gold, delete noise, protect distilled')
-  .version('2.0.0');
+  .description('Distill agent memories — score, enrich, re-embed, clean')
+  .version('3.0.0');
 
 program
   .command('distill')
-  .description('FULL: re-score ALL memories (expensive, use rarely)')
+  .description('FULL: re-score + enrich + re-embed ALL memories')
   .option('--agent <name>', 'Process specific agent')
   .option('--min-score <n>', 'Min quality score (default: 60)', parseNumber)
   .option('--max-per-agent <n>', 'Max per agent (default: 100)', parseNumber)
   .option('--dry-run', 'Preview without changes', false)
   .option('--snapshot', 'Create snapshot after', false)
-  .option('--llm', 'Use LLM scoring', false)
-  .option('--rule-only', 'Force rule-based only', false)
+  .option('--llm', 'Use LLM scoring + enrichment', false)
+  .option('--rule-only', 'Force rule-based only (no enrichment)', false)
   .action(async (options) => {
     setupEnv(options);
     const config = buildDistillConfig({
@@ -33,20 +33,19 @@ program
       dryRun: options.dryRun, createSnapshot: options.snapshot,
       forceRuleOnly: Boolean(options.ruleOnly),
     });
-    const report = await distillerService.distill(config);
-    printReport(report, Boolean(options.dryRun));
+    printReport(await distillerService.distill(config), Boolean(options.dryRun));
   });
 
 program
   .command('incremental')
-  .description('INCREMENTAL: score only NEW memories, delete noise (daily cron)')
+  .description('INCREMENTAL: score + enrich + re-embed only NEW memories (daily cron)')
   .option('--agent <name>', 'Process specific agent')
   .option('--min-score <n>', 'Min quality score (default: 60)', parseNumber)
   .option('--max-per-agent <n>', 'Max per agent (default: 100)', parseNumber)
   .option('--dry-run', 'Preview without changes', false)
   .option('--snapshot', 'Create snapshot after', false)
-  .option('--llm', 'Use LLM scoring', false)
-  .option('--rule-only', 'Force rule-based only', false)
+  .option('--llm', 'Use LLM scoring + enrichment', false)
+  .option('--rule-only', 'Force rule-based only (no enrichment)', false)
   .action(async (options) => {
     setupEnv(options);
     const config = buildDistillConfig({
@@ -55,8 +54,7 @@ program
       dryRun: options.dryRun, createSnapshot: options.snapshot,
       forceRuleOnly: Boolean(options.ruleOnly),
     });
-    const report = await distillerService.incrementalDistill(config);
-    printReport(report, Boolean(options.dryRun));
+    printReport(await distillerService.incrementalDistill(config), Boolean(options.dryRun));
   });
 
 program
@@ -70,38 +68,25 @@ program
 
     console.log(chalk.cyan('\n=== Distill Status ==='));
     console.log(`Source (${qdrantService.sourceCollectionName}): ${sourceCount} points`);
-    console.log(`  ├── distilled=true (protected): ${distilledCount}`);
-    console.log(`  └── undistilled (needs processing): ${sourceCount - distilledCount}`);
+    console.log(`  ├── distilled (protected + re-embedded): ${distilledCount}`);
+    console.log(`  └── undistilled (pending): ${sourceCount - distilledCount}`);
     console.log(`Golden backup (${qdrantService.goldenCollectionName}): ${goldenCount} points`);
 
     if (state) {
       console.log(chalk.yellow('\nLast distill:'));
       console.log(`  Date: ${state.lastDistillDate}`);
-      console.log(`  Gold kept: ${state.goldCount}`);
-      console.log(`  Noise deleted: ${state.noiseDeleted}`);
+      console.log(`  Gold: ${state.goldCount}, Noise deleted: ${state.noiseDeleted}`);
       console.log(`  Source: ${state.sourceCountBefore} → ${state.sourceCountAfter}`);
-      console.log(`  Total ever distilled: ${state.totalDistilledEver}`);
+      console.log(`  Total distilled ever: ${state.totalDistilledEver}`);
     } else {
-      console.log(chalk.yellow('\nNo previous distill state found (first run pending)'));
+      console.log(chalk.yellow('\nNo previous state (first run pending)'));
     }
   });
 
-program
-  .command('snapshot')
-  .description('Create backup snapshot of source collection')
+program.command('snapshot').description('Create backup snapshot')
   .action(async () => {
-    const path = await qdrantService.createSnapshot(qdrantService.sourceCollectionName);
-    console.log(chalk.green(`✅ Snapshot: ${path}`));
-  });
-
-program
-  .command('report')
-  .description('Quick preview — dry-run rule-based scoring')
-  .option('--agent <name>', 'Process specific agent')
-  .action(async (options) => {
-    const agents = options.agent ? [String(options.agent)] : DEFAULT_AGENTS;
-    const report = await distillerService.buildReport(agents);
-    printReport(report, true);
+    const p = await qdrantService.createSnapshot(qdrantService.sourceCollectionName);
+    console.log(chalk.green(`✅ Snapshot: ${p}`));
   });
 
 program.parseAsync(process.argv).catch((err: unknown) => {
@@ -109,9 +94,9 @@ program.parseAsync(process.argv).catch((err: unknown) => {
   process.exit(1);
 });
 
-function setupEnv(opts: Record<string, unknown>) {
-  if (opts.llm) process.env.LLM_SCORING_ENABLED = 'true';
-  if (opts.ruleOnly) process.env.LLM_SCORING_ENABLED = 'false';
+function setupEnv(o: Record<string, unknown>) {
+  if (o.llm) process.env.LLM_SCORING_ENABLED = 'true';
+  if (o.ruleOnly) process.env.LLM_SCORING_ENABLED = 'false';
 }
 
 function parseNumber(v: string): number {
@@ -120,21 +105,20 @@ function parseNumber(v: string): number {
   return n;
 }
 
-function printReport(report: DistillReport, dryRun: boolean): void {
+function printReport(r: DistillReport, dryRun: boolean): void {
   console.log(chalk.cyan('\n=== Distill Report ==='));
-  console.log(`Time: ${report.timestamp}`);
-  console.log(`Mode: ${report.mode?.toUpperCase() || (dryRun ? 'DRY RUN' : 'WRITE')}`);
-  console.log(`Processed: ${report.totalProcessed}`);
-  console.log(`Gold (kept): ${report.totalKept}`);
-  console.log(`Noise (discarded): ${report.totalDiscarded}`);
-  if (report.totalMarkedDistilled != null) console.log(`Marked distilled: ${report.totalMarkedDistilled}`);
-  if (report.totalNoiseDeleted != null) console.log(`Noise deleted: ${report.totalNoiseDeleted}`);
+  console.log(`Time: ${r.timestamp} | Mode: ${r.mode?.toUpperCase() ?? (dryRun ? 'DRY' : 'WRITE')}`);
+  console.log(`Processed: ${r.totalProcessed} | Gold: ${r.totalKept} | Noise: ${r.totalDiscarded}`);
+  if (r.totalMarkedDistilled != null) console.log(`Marked distilled: ${r.totalMarkedDistilled}`);
+  if (r.totalReembedded != null) console.log(`Re-embedded vectors: ${r.totalReembedded}`);
+  if (r.totalNoiseDeleted != null) console.log(`Noise deleted: ${r.totalNoiseDeleted}`);
 
-  for (const [agent, s] of Object.entries(report.byAgent)) {
-    console.log(chalk.yellow(`\n[${agent}] kept=${s.kept}, noise=${s.noiseCount || 0}, total=${s.processed}`));
+  for (const [agent, s] of Object.entries(r.byAgent)) {
+    console.log(chalk.yellow(`\n[${agent}] gold=${s.kept} noise=${s.noiseCount ?? 0} total=${s.processed}`));
     for (const m of s.topMemories) {
       console.log(`  (${m.score}) [${m.category}] ${m.text}`);
+      if (m.enrichedText) console.log(chalk.gray(`    → enriched: ${m.enrichedText}`));
     }
   }
-  if (report.snapshotCreated) console.log(chalk.green(`\nSnapshot: ${report.snapshotCreated}`));
+  if (r.snapshotCreated) console.log(chalk.green(`\nSnapshot: ${r.snapshotCreated}`));
 }

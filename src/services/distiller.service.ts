@@ -6,12 +6,10 @@ import { preFilter, scoreMemory } from './scorer.service';
 export class DistillerService {
   constructor(private readonly qdrantService: QdrantService) {}
 
-  /** FULL distill: score ALL memories (ignores state/flags) */
   async distill(config: DistillConfig): Promise<DistillReport> {
     return this.runDistill(config, 'full');
   }
 
-  /** INCREMENTAL distill: score only NEW undistilled memories */
   async incrementalDistill(config: DistillConfig): Promise<DistillReport> {
     return this.runDistill(config, 'incremental');
   }
@@ -20,7 +18,8 @@ export class DistillerService {
     const report: DistillReport = {
       timestamp: new Date().toISOString(), mode,
       totalProcessed: 0, totalKept: 0, totalDiscarded: 0,
-      totalNoiseDeleted: 0, totalMarkedDistilled: 0, byAgent: {},
+      totalNoiseDeleted: 0, totalMarkedDistilled: 0, totalReembedded: 0,
+      byAgent: {},
     };
 
     const selectedByAgent: Record<string, ScoredMemory[]> = {};
@@ -38,18 +37,16 @@ export class DistillerService {
         { baseUrl: llmBaseUrl, apiKey: llmApiKey, model: llmModel },
         Number.parseInt(process.env.LLM_BATCH_SIZE || '10', 10),
       );
-      console.log(`🧠 LLM scoring enabled (${llmModel} via ${llmBaseUrl})`);
+      console.log(`🧠 LLM scoring + enriching enabled (${llmModel})`);
     } else {
-      console.log('📏 Rule-based scoring (set --llm for LLM)');
+      console.log('📏 Rule-based scoring (no enrichment — set --llm for LLM)');
     }
 
-    // Load state for incremental
     const prevState = await this.qdrantService.loadState();
     if (mode === 'incremental' && prevState) {
       console.log(`📋 Mode: INCREMENTAL (since ${prevState.lastDistillDate})`);
-      console.log(`   Previous run: ${prevState.goldCount} gold, ${prevState.noiseDeleted} noise deleted`);
     } else {
-      console.log(`📋 Mode: ${mode.toUpperCase()}${mode === 'incremental' ? ' (first run — no previous state)' : ''}`);
+      console.log(`📋 Mode: ${mode.toUpperCase()}`);
     }
 
     const beforeCount = await this.qdrantService.getCount(this.qdrantService.sourceCollectionName);
@@ -91,8 +88,9 @@ export class DistillerService {
       report.byAgent[agent] = {
         processed: memories.length, kept: gold.length,
         noiseCount: noiseByAgent[agent].length,
-        topMemories: gold.slice(0, 5).map((m) => ({
-          text: truncate(m.text, 160), score: m.qualityScore, category: m.category,
+        topMemories: gold.slice(0, 3).map((m) => ({
+          text: truncate(m.text, 120), score: m.qualityScore, category: m.category,
+          enrichedText: truncate(m.distilledText || '', 150),
         })),
       };
     }
@@ -102,26 +100,27 @@ export class DistillerService {
     const flatNoise = Object.values(noiseByAgent).flat();
 
     if (!config.dryRun) {
-      // Step 1: Mark gold as distilled=true in mrc_bot_memory (PROTECTED)
-      const marked = await this.qdrantService.markAsDistilled(flatGold);
+      // Step 1: Mark gold as distilled + RE-EMBED enrichedText
+      console.log(`\n🔄 Enriching + re-embedding ${flatGold.length} gold memories...`);
+      const { marked, reembedded } = await this.qdrantService.markAsDistilledAndReembed(flatGold);
       report.totalMarkedDistilled = marked;
-      console.log(`\n✅ Marked ${marked} gold as distilled (protected forever)`);
+      report.totalReembedded = reembedded;
+      console.log(`✅ Marked: ${marked}, Re-embedded: ${reembedded}`);
 
-      // Step 2: Delete noise from mrc_bot_memory
+      // Step 2: Delete noise
       const deleted = await this.qdrantService.deleteNoiseMemories(flatNoise);
       report.totalNoiseDeleted = deleted;
-      console.log(`🗑️  Deleted ${deleted} noise from source`);
+      console.log(`🗑️  Deleted ${deleted} noise`);
 
-      // Step 3: Backup gold to golden collection
+      // Step 3: Backup to golden collection
       await this.qdrantService.createGoldenCollection();
       await this.qdrantService.upsertGoldenMemories(flatGold);
       console.log(`📦 Backed up ${flatGold.length} to golden collection`);
 
-      // Step 4: Save state for next incremental run
+      // Step 4: Save state
       const afterCount = await this.qdrantService.getCount(this.qdrantService.sourceCollectionName);
       const totalDistilled = await this.qdrantService.getDistilledCount();
-
-      const newState: DistillState = {
+      await this.qdrantService.saveState({
         lastDistillTime: Date.now(),
         lastDistillDate: new Date().toISOString(),
         goldCount: flatGold.length,
@@ -129,20 +128,18 @@ export class DistillerService {
         sourceCountBefore: beforeCount,
         sourceCountAfter: afterCount,
         totalDistilledEver: totalDistilled,
-      };
-      await this.qdrantService.saveState(newState);
-      console.log(`💾 State saved to last-distill.json`);
+      });
 
-      console.log(`\n📊 Result: ${beforeCount} → ${afterCount} points (cleaned ${beforeCount - afterCount})`);
+      console.log(`\n📊 Source: ${beforeCount} → ${afterCount} (cleaned ${beforeCount - afterCount})`);
       console.log(`📊 Protected (distilled=true): ${totalDistilled}`);
+      console.log(`📊 Re-embedded vectors: ${reembedded}`);
 
-      // Step 5: Optional snapshot
       if (config.createSnapshot) {
         report.snapshotCreated = await this.qdrantService.createSnapshot(this.qdrantService.sourceCollectionName);
       }
     } else {
-      console.log(`\n🔍 DRY RUN — no changes made`);
-      console.log(`   Would keep: ${flatGold.length} gold, delete: ${flatNoise.length} noise`);
+      console.log(`\n🔍 DRY RUN — no changes`);
+      console.log(`   Would: keep ${flatGold.length} gold (enrich+re-embed), delete ${flatNoise.length} noise`);
     }
 
     return report;

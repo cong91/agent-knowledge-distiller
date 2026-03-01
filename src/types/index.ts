@@ -13,7 +13,7 @@ export interface ScoredMemory extends AgentMemory {
   qualityScore: number; // 0-100
   category: MemoryCategory;
   tags: string[];
-  distilledText?: string; // LLM-summarized version
+  distilledText?: string; // LLM-enriched self-contained version
   scoringMethod: 'rule' | 'llm';
   llmReasoning?: string;
 }
@@ -41,20 +41,26 @@ export interface DistillConfig {
 }
 
 export interface DistillReport {
-  mode?: "full" | "incremental";
+  mode?: 'full' | 'incremental';
   timestamp: string;
   totalProcessed: number;
   totalKept: number;
   totalDiscarded: number;
   totalNoiseDeleted?: number;
   totalMarkedDistilled?: number;
+  totalReembedded?: number;
   byAgent: Record<
     string,
     {
       processed: number;
       kept: number;
       noiseCount?: number;
-      topMemories: Array<{ text: string; score: number; category: string }>;
+      topMemories: Array<{
+        text: string;
+        score: number;
+        category: string;
+        enrichedText?: string;
+      }>;
     }
   >;
   snapshotCreated?: string;
@@ -62,11 +68,11 @@ export interface DistillReport {
 
 /** State persisted between distill runs */
 export interface DistillState {
-  lastDistillTime: number;       // timestamp ms of last distill
-  lastDistillDate: string;       // ISO string for readability
-  goldCount: number;             // how many gold kept this run
-  noiseDeleted: number;          // how many noise deleted this run
-  sourceCountBefore: number;     // mrc_bot_memory count before
-  sourceCountAfter: number;      // mrc_bot_memory count after
-  totalDistilledEver: number;    // cumulative distilled records
+  lastDistillTime: number;
+  lastDistillDate: string;
+  goldCount: number;
+  noiseDeleted: number;
+  sourceCountBefore: number;
+  sourceCountAfter: number;
+  totalDistilledEver: number;
 }
