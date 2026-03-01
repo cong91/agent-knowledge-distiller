@@ -2,12 +2,15 @@ import { AgentMemory, MemoryCategory, ScoredMemory } from '../types';
 import { scoreMemory } from './scorer.service';
 
 /**
- * LLM Scorer Service — OpenAI-compatible API
+ * LLM Context-Aware Scorer Service
  * 
- * Uses the same pattern as agent-smart-memo:
- * - baseUrl/chat/completions (OpenAI-compatible endpoint)
- * - Bearer token auth
- * - Works with OpenClaw proxy at localhost:8317/v1
+ * Improvement: Instead of scoring each memory in isolation,
+ * groups memories by agent + time window (±30min) so LLM
+ * sees surrounding context when evaluating each memory.
+ * 
+ * Example: "Tập trung quản lý 3 vị thế: KITE, SIGN, POWER"
+ * → alone = low score (vague)
+ * → with context of trade journal entries nearby = high score
  */
 
 interface LLMConfig {
@@ -26,6 +29,9 @@ interface OpenAIChatResponse {
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
+// 30 minutes in ms — memories within this window are "related context"
+const CONTEXT_WINDOW_MS = 30 * 60 * 1000;
+
 const SCORING_PROMPT = `You are an AI Knowledge Quality Evaluator. Score each memory for its long-term value to an AI agent team.
 
 Context: These memories come from an AI trading system with 4 agents:
@@ -34,7 +40,9 @@ Context: These memories come from an AI trading system with 4 agents:
 - scrum: Project management, planning, orchestration
 - assistant: General orchestration, user interaction
 
-For each memory, provide:
+IMPORTANT: Each memory marked [SCORE] needs a score. Memories marked [CTX] are surrounding context — DO NOT score them, they are provided so you understand what was happening around the memory being scored.
+
+For each [SCORE] memory, provide:
 1. score (0-100): How valuable is this knowledge for the agent's future performance?
 2. category: One of: trading_win_pattern, trading_loss_lesson, market_insight, bug_fix_pattern, architecture_decision, code_pattern, process_improvement, project_context, system_rule, noise
 3. reasoning: 1 sentence why this score
@@ -46,32 +54,34 @@ Scoring guidelines:
 - 30-49: Low value, temporary or already outdated info
 - 0-29: Noise, test data, system junk, or duplicated info
 
-Respond in JSON array format:
+Respond in JSON array format (ONLY for [SCORE] memories):
 [{"index": 0, "score": 85, "category": "trading_win_pattern", "reasoning": "..."}]`;
 
 const ALLOWED_CATEGORIES = new Set<MemoryCategory>([
-  'trading_win_pattern',
-  'trading_loss_lesson',
-  'market_insight',
-  'bug_fix_pattern',
-  'architecture_decision',
-  'code_pattern',
-  'process_improvement',
-  'project_context',
-  'system_rule',
-  'noise',
+  'trading_win_pattern', 'trading_loss_lesson', 'market_insight',
+  'bug_fix_pattern', 'architecture_decision', 'code_pattern',
+  'process_improvement', 'project_context', 'system_rule', 'noise',
 ]);
 
 export class LLMScorerService {
   private config: LLMConfig;
   private batchSize: number;
+  private allMemoriesIndex: Map<string, AgentMemory[]>; // agent → sorted memories
 
   constructor(config: LLMConfig, batchSize = 10) {
     this.config = config;
     this.batchSize = Math.max(1, batchSize);
+    this.allMemoriesIndex = new Map();
   }
 
+  /**
+   * Score with context: builds an index of ALL memories first,
+   * then for each batch, includes nearby context memories
+   */
   async scoreBatch(memories: AgentMemory[]): Promise<ScoredMemory[]> {
+    // Build time-sorted index per agent for context lookup
+    this.buildContextIndex(memories);
+
     const results: ScoredMemory[] = [];
 
     for (let i = 0; i < memories.length; i += this.batchSize) {
@@ -80,7 +90,7 @@ export class LLMScorerService {
       results.push(...batchResults);
 
       const progress = Math.min(i + this.batchSize, memories.length);
-      console.log(`  LLM scoring: ${progress}/${memories.length} (${((progress / memories.length) * 100).toFixed(0)}%)`);
+      console.log(`  🧠 LLM scoring: ${progress}/${memories.length} (${((progress / memories.length) * 100).toFixed(0)}%)`);
 
       if (i + this.batchSize < memories.length) {
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -90,10 +100,59 @@ export class LLMScorerService {
     return results;
   }
 
+  private buildContextIndex(memories: AgentMemory[]): void {
+    this.allMemoriesIndex.clear();
+    for (const m of memories) {
+      const agent = m.source_agent || 'unknown';
+      if (!this.allMemoriesIndex.has(agent)) {
+        this.allMemoriesIndex.set(agent, []);
+      }
+      this.allMemoriesIndex.get(agent)!.push(m);
+    }
+    // Sort each agent's memories by timestamp
+    for (const [, list] of this.allMemoriesIndex) {
+      list.sort((a, b) => a.timestamp - b.timestamp);
+    }
+  }
+
+  /**
+   * Find surrounding memories within ±30min of target memory
+   * Returns up to 3 context memories (before + after)
+   */
+  private findContextMemories(target: AgentMemory): AgentMemory[] {
+    const agentMemories = this.allMemoriesIndex.get(target.source_agent || 'unknown') || [];
+    const context: AgentMemory[] = [];
+
+    for (const m of agentMemories) {
+      if (m.id === target.id) continue; // skip self
+      const timeDiff = Math.abs(m.timestamp - target.timestamp);
+      if (timeDiff <= CONTEXT_WINDOW_MS) {
+        context.push(m);
+      }
+    }
+
+    // Return max 3 closest context memories (to limit prompt size)
+    return context
+      .sort((a, b) => Math.abs(a.timestamp - target.timestamp) - Math.abs(b.timestamp - target.timestamp))
+      .slice(0, 3);
+  }
+
   private async scoreSingleBatch(batch: AgentMemory[]): Promise<ScoredMemory[]> {
-    const memoriesText = batch
-      .map((m, idx) => `[${idx}] agent=${m.source_agent} ns=${m.namespace} | ${(m.text ?? '').slice(0, 500)}`)
-      .join('\n\n');
+    // Build context-enriched prompt
+    const memoriesText = batch.map((m, idx) => {
+      const contextMemories = this.findContextMemories(m);
+      
+      let text = `[SCORE ${idx}] agent=${m.source_agent} ns=${m.namespace} | ${(m.text ?? '').slice(0, 500)}`;
+      
+      if (contextMemories.length > 0) {
+        const ctxLines = contextMemories.map(
+          (c) => `  [CTX] ${(c.text ?? '').slice(0, 200)}`
+        ).join('\n');
+        text += `\n  ↳ Surrounding context (same agent, ±30min):\n${ctxLines}`;
+      }
+      
+      return text;
+    }).join('\n\n');
 
     try {
       const response = await fetch(`${this.config.baseUrl}/chat/completions`, {
@@ -130,19 +189,17 @@ export class LLMScorerService {
         const llmScore = scores.find((s) => s.index === idx);
         if (!llmScore) {
           const fallback = scoreMemory(memory);
-          return {
-            ...fallback,
-            tags: [...fallback.tags, 'llm-fallback'],
-          };
+          return { ...fallback, tags: [...fallback.tags, 'llm-fallback'] };
         }
 
-        const category: MemoryCategory = ALLOWED_CATEGORIES.has(llmScore.category) ? llmScore.category : 'noise';
+        const category: MemoryCategory = ALLOWED_CATEGORIES.has(llmScore.category) 
+          ? llmScore.category : 'noise';
 
         return {
           ...memory,
           qualityScore: clampScore(llmScore.score),
           category,
-          tags: [category, 'llm-scored'],
+          tags: [category, 'llm-scored', 'context-aware'],
           distilledText: llmScore.reasoning,
           scoringMethod: 'llm' as const,
           llmReasoning: llmScore.reasoning,
@@ -150,22 +207,16 @@ export class LLMScorerService {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      console.warn(`  LLM batch scoring failed, falling back to rule-based: ${message}`);
+      console.warn(`  ⚠️ LLM batch failed, falling back to rule-based: ${message}`);
       return batch.map((memory) => {
         const fallback = scoreMemory(memory);
-        return {
-          ...fallback,
-          tags: [...fallback.tags, 'llm-fallback'],
-        };
+        return { ...fallback, tags: [...fallback.tags, 'llm-fallback'] };
       });
     }
   }
 
   private parseScores(rawText: string): Array<{
-    index: number;
-    score: number;
-    category: MemoryCategory;
-    reasoning: string;
+    index: number; score: number; category: MemoryCategory; reasoning: string;
   }> {
     const cleaned = stripCodeFence(rawText).trim();
     const parsed = JSON.parse(cleaned) as unknown;
