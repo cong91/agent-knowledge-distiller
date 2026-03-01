@@ -59,3 +59,14 @@ export interface DistillReport {
   >;
   snapshotCreated?: string;
 }
+
+/** State persisted between distill runs */
+export interface DistillState {
+  lastDistillTime: number;       // timestamp ms of last distill
+  lastDistillDate: string;       // ISO string for readability
+  goldCount: number;             // how many gold kept this run
+  noiseDeleted: number;          // how many noise deleted this run
+  sourceCountBefore: number;     // mrc_bot_memory count before
+  sourceCountAfter: number;      // mrc_bot_memory count after
+  totalDistilledEver: number;    // cumulative distilled records
+}
