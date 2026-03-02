@@ -36,10 +36,10 @@ export class QdrantService {
   }
 
   async getUndistilledMemories(agent?: string, namespace?: string): Promise<AgentMemory[]> {
-    const state = await this.loadState();
+    // No sinceTimestamp filter — just skip already-distilled memories
+    // Previously sinceTimestamp caused 5,698 old memories to be stuck forever
     return this.scrollMemories(this.sourceCollection, agent, namespace, {
       skipDistilled: true,
-      sinceTimestamp: state?.lastDistillTime,
     });
   }
 

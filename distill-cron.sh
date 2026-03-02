@@ -27,7 +27,7 @@ echo "========================================" >> "$LOG_FILE"
 TS_NODE="$DISTILLER_DIR/node_modules/.bin/ts-node"
 
 # Run incremental distill with LLM scoring
-"$TS_NODE" src/index.ts incremental --llm --snapshot >> "$LOG_FILE" 2>&1
+"$TS_NODE" src/index.ts incremental --llm --snapshot --max-per-agent 1500 >> "$LOG_FILE" 2>&1
 
 echo "" >> "$LOG_FILE"
 echo "Status after distill:" >> "$LOG_FILE"

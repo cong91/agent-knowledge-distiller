@@ -28,7 +28,7 @@ async function main() {
   // 1. Create snapshot backup first
   console.log('📸 Creating backup snapshot...');
   const snapshot = await client.createSnapshot(COLLECTION);
-  console.log(`✅ Snapshot: ${snapshot.name}`);
+  console.log(`✅ Snapshot: ${snapshot?.name ?? "created"}`);
 
   // 2. Count total points
   const info = await client.getCollection(COLLECTION);
@@ -80,7 +80,7 @@ async function main() {
     const pct = ((processed / total) * 100).toFixed(0);
     console.log(`  🔄 Re-embedded: ${processed}/${total} (${pct}%) [errors: ${errors}]`);
 
-    offset = batch.next_page_offset ?? undefined;
+    offset = (batch.next_page_offset as string | number | undefined) ?? undefined;
     if (!offset) break;
 
     // Small delay to not overwhelm Ollama
