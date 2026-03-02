@@ -3,7 +3,7 @@ import { DistillConfig, MemoryCategory } from '../types';
 
 dotenv.config();
 
-export const DEFAULT_AGENTS = ['trader', 'fullstack', 'assistant', 'scrum'];
+export const DEFAULT_AGENTS = ['trader', 'fullstack', 'assistant', 'scrum', 'creator'];
 
 export const DEFAULT_CATEGORIES: MemoryCategory[] = [
   'trading_win_pattern',

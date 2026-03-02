@@ -2,27 +2,36 @@
 # Agent Knowledge Distiller — Daily Incremental Cron
 # Schedule: 0 4 * * * (4:00 AM daily)
 # Purpose: Score new memories, keep gold, delete noise
+# Fixed 2026-03-02: Use absolute paths (cron doesn't load shell profile)
 
 set -e
 
 export HOME="/Users/mrcagents"
-export PATH="$HOME/.nvm/versions/node/v20.18.0/bin:$HOME/.bun/bin:/usr/local/bin:$PATH"
+# Use Homebrew node (stable) + NVM fallback
+export PATH="/opt/homebrew/bin:$HOME/.nvm/versions/node/v24.13.1/bin:$HOME/.bun/bin:/usr/local/bin:$PATH"
 
 DISTILLER_DIR="$HOME/.openclaw/workspace/projects/agent-knowledge-distiller"
 LOG_FILE="$DISTILLER_DIR/snapshots/distill-$(date +%Y-%m-%d).log"
+
+# Ensure snapshots dir exists
+mkdir -p "$DISTILLER_DIR/snapshots"
 
 cd "$DISTILLER_DIR"
 
 echo "========================================" >> "$LOG_FILE"
 echo "Distill run: $(date)" >> "$LOG_FILE"
+echo "Node: $(node --version) @ $(which node)" >> "$LOG_FILE"
 echo "========================================" >> "$LOG_FILE"
 
+# Use local ts-node from node_modules (most reliable)
+TS_NODE="$DISTILLER_DIR/node_modules/.bin/ts-node"
+
 # Run incremental distill with LLM scoring
-npx ts-node src/index.ts incremental --llm --snapshot >> "$LOG_FILE" 2>&1
+"$TS_NODE" src/index.ts incremental --llm --snapshot >> "$LOG_FILE" 2>&1
 
 echo "" >> "$LOG_FILE"
 echo "Status after distill:" >> "$LOG_FILE"
-npx ts-node src/index.ts status >> "$LOG_FILE" 2>&1
+"$TS_NODE" src/index.ts status >> "$LOG_FILE" 2>&1
 
 echo "Completed: $(date)" >> "$LOG_FILE"
 echo "" >> "$LOG_FILE"
