@@ -1,11 +1,11 @@
 /**
- * Embedding Service — calls Ollama mxbai-embed-large locally
+ * Embedding Service — calls Ollama qwen3-embedding:0.6b locally
  * Same model OpenClaw uses to embed memories
  * 
  * Re-embeds enrichedText so vector matches the richer content
  */
 
-const DEFAULT_MODEL = 'mxbai-embed-large';
+const DEFAULT_MODEL = 'qwen3-embedding:0.6b';
 const DEFAULT_OLLAMA_URL = 'http://localhost:11434';
 
 export class EmbeddingService {
