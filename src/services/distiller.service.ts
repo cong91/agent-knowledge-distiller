@@ -70,14 +70,15 @@ export class DistillerService {
         ? await llmScorer.scoreBatch(filtered)
         : filtered.map((m) => scoreMemory(m));
 
+      // Gold = score >= threshold AND not noise (no arbitrary limit)
       const gold = scored
         .filter((m) => m.qualityScore >= config.minQualityScore)
         .filter((m) => m.category !== 'noise')
-        .filter((m) => config.categories.includes(m.category))
-        .sort((a, b) => b.qualityScore - a.qualityScore)
-        .slice(0, config.maxOutputPerAgent);
+        .sort((a, b) => b.qualityScore - a.qualityScore);
 
-      const noise = scored.filter((m) => m.qualityScore < config.minQualityScore || m.category === 'noise');
+      // Everything else = noise (to be deleted)
+      const goldIds = new Set(gold.map((m) => m.id));
+      const noise = scored.filter((m) => !goldIds.has(m.id));
       const preFilteredIds = memories.filter((m) => !filtered.find((f) => f.id === m.id)).map((m) => m.id);
 
       selectedByAgent[agent] = gold;

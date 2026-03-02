@@ -28,7 +28,7 @@ export function buildDistillConfig(options: {
   return {
     agents: options.agents && options.agents.length > 0 ? options.agents : DEFAULT_AGENTS,
     minQualityScore: options.minScore ?? 60,
-    maxOutputPerAgent: options.maxPerAgent ?? 100,
+    maxOutputPerAgent: options.maxPerAgent ?? Infinity,
     categories: DEFAULT_CATEGORIES,
     dryRun: options.dryRun ?? false,
     createSnapshot: options.createSnapshot ?? false,
