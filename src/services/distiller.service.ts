@@ -28,7 +28,7 @@ export class DistillerService {
     // LLM setup
     const llmBaseUrl = process.env.LLM_BASE_URL || 'http://localhost:8317/v1';
     const llmApiKey = process.env.LLM_API_KEY || 'proxypal-local';
-    const llmModel = process.env.LLM_MODEL || 'gemini-2.5-flash';
+    const llmModel = process.env.LLM_MODEL || 'gpt-5';
     const llmEnabled = process.env.LLM_SCORING_ENABLED === 'true' && !config.forceRuleOnly;
 
     let llmScorer: LLMScorerService | null = null;
@@ -103,10 +103,22 @@ export class DistillerService {
     if (!config.dryRun) {
       // Step 1: Mark gold as distilled + RE-EMBED enrichedText
       console.log(`\n🔄 Enriching + re-embedding ${flatGold.length} gold memories...`);
-      const { marked, reembedded } = await this.qdrantService.markAsDistilledAndReembed(flatGold);
+      const { marked, reembedded, truncated, embeddingMeta } = await this.qdrantService.markAsDistilledAndReembed(flatGold);
       report.totalMarkedDistilled = marked;
       report.totalReembedded = reembedded;
-      console.log(`✅ Marked: ${marked}, Re-embedded: ${reembedded}`);
+      report.totalTruncated = truncated;
+      console.log(`✅ Marked: ${marked}, Re-embedded: ${reembedded}, Truncated: ${truncated}`);
+
+      // Update topMemories with embedding metadata
+      for (const [agent, agentData] of Object.entries(report.byAgent)) {
+        agentData.topMemories = agentData.topMemories.map((m, idx) => {
+          const originalMemory = selectedByAgent[agent]?.[idx];
+          if (originalMemory && embeddingMeta.has(originalMemory.id)) {
+            return { ...m, embeddingMetadata: embeddingMeta.get(originalMemory.id) };
+          }
+          return m;
+        });
+      }
 
       // Step 2: Delete noise
       const deleted = await this.qdrantService.deleteNoiseMemories(flatNoise);

@@ -7,6 +7,7 @@
 set -e
 
 export HOME="/Users/mrcagents"
+export OPENCLAW_SLOTDB_DIR="/Users/mrcagents/.openclaw/agent-memo"
 # Use Homebrew node (stable) + NVM fallback
 export PATH="/opt/homebrew/bin:$HOME/.nvm/versions/node/v24.13.1/bin:$HOME/.bun/bin:/usr/local/bin:$PATH"
 
@@ -118,10 +119,16 @@ cfg=obj.get('plugins',{}).get('entries',{}).get('agent-smart-memo',{}).get('conf
 qdrant_collection=cfg.get('qdrantCollection','mrc_bot')
 embed_model=cfg.get('embedModel','qwen3-embedding:0.6b')
 embed_dims=cfg.get('embedDimensions',1024)
+llm_base_url=cfg.get('llmBaseUrl','http://localhost:8317/v1')
+llm_api_key=cfg.get('llmApiKey','proxypal-local')
+llm_model=cfg.get('llmModel','gpt-5')
 print(f'export QDRANT_COLLECTION="{qdrant_collection}"')
 print(f'export EMBED_MODEL="{embed_model}"')
 print(f'export EMBEDDING_MODEL="{embed_model}"')
 print(f'export EMBEDDING_DIMENSIONS="{embed_dims}"')
+print(f'export LLM_BASE_URL="{llm_base_url}"')
+print(f'export LLM_API_KEY="{llm_api_key}"')
+print(f'export LLM_MODEL="{llm_model}"')
 PY
 )"
 else
@@ -131,6 +138,8 @@ else
   export EMBEDDING_MODEL="qwen3-embedding:0.6b"
   export EMBEDDING_DIMENSIONS="1024"
 fi
+
+echo "Resolved config (agent-smart-memo): QDRANT_COLLECTION=$QDRANT_COLLECTION EMBEDDING_MODEL=$EMBEDDING_MODEL LLM_BASE_URL=$LLM_BASE_URL LLM_MODEL=$LLM_MODEL" >> "$LOG_FILE"
 
 # Run incremental distill with LLM scoring
 "$TS_NODE" src/index.ts incremental --llm --snapshot --max-per-agent 1500 >> "$LOG_FILE" 2>&1
