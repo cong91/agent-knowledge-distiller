@@ -7,6 +7,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "distill": "ts-node src/index.ts distill",
+    "incremental": "ts-node src/index.ts incremental",
+    "status": "ts-node src/index.ts status",
     "snapshot": "ts-node src/index.ts snapshot",
     "report": "ts-node src/index.ts report",
     "dev": "ts-node src/index.ts"
