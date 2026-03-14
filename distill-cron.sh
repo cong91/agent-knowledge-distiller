@@ -11,7 +11,7 @@ export OPENCLAW_SLOTDB_DIR="/Users/mrcagents/.openclaw/agent-memo"
 # Use Homebrew node (stable) + NVM fallback
 export PATH="/opt/homebrew/bin:$HOME/.nvm/versions/node/v24.13.1/bin:$HOME/.bun/bin:/usr/local/bin:$PATH"
 
-DISTILLER_DIR="$HOME/.openclaw/workspace/projects/agent-knowledge-distiller"
+DISTILLER_DIR="${DISTILLER_DIR:-${PROJECT_WORKSPACE_ROOT:-$HOME/Work/projects/agent-knowledge-distiller}}"
 LOG_FILE="$DISTILLER_DIR/snapshots/distill-$(date +%Y-%m-%d).log"
 
 # Ensure snapshots dir exists

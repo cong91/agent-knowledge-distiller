@@ -35,8 +35,11 @@ src/
 
 ## Setup
 
+By default this project is expected to live under `~/Work/projects/agent-knowledge-distiller`.
+You can override runtime path resolution for shell scripts with `DISTILLER_DIR` or `PROJECT_WORKSPACE_ROOT`.
+
 ```bash
-cd /Users/mrcagents/.openclaw/workspace/projects/agent-knowledge-distiller
+cd /Users/mrcagents/Work/projects/agent-knowledge-distiller
 npm install
 ```
 
