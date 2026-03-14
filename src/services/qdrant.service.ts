@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { QdrantClient } from '@qdrant/js-client-rest';
-import { AgentMemory, ScoredMemory, DistillState } from '../types';
+import { AgentMemory, ScoredMemory, DistillArtifactEntry, DistillOperationalSummary, DistillState } from '../types';
 import { EmbeddingService } from './embedding.service';
 
 const DEFAULT_BATCH_SIZE = 256;
@@ -55,11 +55,18 @@ export class QdrantService {
    * 
    * Result: gold memory is now self-contained with matching vector
    */
-  async markAsDistilledAndReembed(memories: ScoredMemory[]): Promise<{ marked: number; reembedded: number }> {
-    if (memories.length === 0) return { marked: 0, reembedded: 0 };
+  async markAsDistilledAndReembed(memories: ScoredMemory[]): Promise<{
+    marked: number;
+    reembedded: number;
+    truncated: number;
+    embeddingMeta: Map<string, { truncated: boolean; originalChars: number; embeddedChars: number }>;
+  }> {
+    if (memories.length === 0) return { marked: 0, reembedded: 0, truncated: 0, embeddingMeta: new Map() };
     const now = Date.now();
     let marked = 0;
     let reembedded = 0;
+    let truncated = 0;
+    const embeddingMeta = new Map<string, { truncated: boolean; originalChars: number; embeddedChars: number }>();
 
     for (const memory of memories) {
       try {
@@ -68,8 +75,15 @@ export class QdrantService {
         // Re-embed the enriched text
         let newVector: number[] | undefined;
         try {
-          newVector = await this.embedder.embed(enrichedText);
+          const embedResult = await this.embedder.embed(enrichedText);
+          newVector = embedResult.vector;
           reembedded++;
+          if (embedResult.metadata.embedding_truncated) truncated++;
+          embeddingMeta.set(memory.id, {
+            truncated: embedResult.metadata.embedding_truncated,
+            originalChars: embedResult.metadata.embedding_original_chars,
+            embeddedChars: embedResult.metadata.embedding_embedded_chars,
+          });
         } catch (embedErr) {
           console.warn(`  ⚠️ Re-embed failed for ${memory.id}, keeping old vector: ${embedErr}`);
         }
@@ -113,7 +127,7 @@ export class QdrantService {
       }
     }
 
-    return { marked, reembedded };
+    return { marked, reembedded, truncated, embeddingMeta };
   }
 
   /** Delete noise memories from source */
@@ -145,6 +159,7 @@ export class QdrantService {
   async saveState(state: DistillState): Promise<void> {
     await mkdir(this.snapshotDir, { recursive: true });
     await writeFile(this.stateFile, JSON.stringify(state, null, 2));
+    await this.writeOperationalSummary(state).catch(() => undefined);
   }
 
   // =================== GOLDEN BACKUP ===================
@@ -198,10 +213,26 @@ export class QdrantService {
     const result = await this.client.createSnapshot(collectionName);
     if (!result?.name) throw new Error(`Failed to create snapshot for: ${collectionName}`);
     await mkdir(this.snapshotDir, { recursive: true });
-    return path.join(this.snapshotDir, result.name);
+    const snapshotPath = path.join(this.snapshotDir, result.name);
+    await this.writeOperationalSummary().catch(() => undefined);
+    return snapshotPath;
   }
 
   async getCollectionInfo(name: string) { return this.client.getCollection(name); }
+
+  async getOperationalSummary(): Promise<DistillOperationalSummary> {
+    await mkdir(this.snapshotDir, { recursive: true });
+    const state = await this.loadState();
+    const entries = await this.listOperationalArtifacts();
+    const summary = {
+      generatedAt: new Date().toISOString(),
+      snapshotDir: this.snapshotDir,
+      state,
+      latestArtifacts: entries,
+    } satisfies DistillOperationalSummary;
+    await writeFile(path.join(this.snapshotDir, 'distill-operational-summary.json'), JSON.stringify(summary, null, 2));
+    return summary;
+  }
 
   // =================== PRIVATE ===================
 
@@ -246,5 +277,41 @@ export class QdrantService {
     if (must.length > 0) filter.must = must;
     if (must_not.length > 0) filter.must_not = must_not;
     return Object.keys(filter).length > 0 ? filter : undefined;
+  }
+
+  private async listOperationalArtifacts(): Promise<DistillArtifactEntry[]> {
+    const names = await readdir(this.snapshotDir).catch(() => [] as string[]);
+    const mapped: DistillArtifactEntry[] = [];
+    for (const name of names) {
+      const fullPath = path.join(this.snapshotDir, name);
+      const info = await stat(fullPath).catch(() => null);
+      if (!info || !info.isFile()) continue;
+      let type: DistillArtifactEntry['type'] = 'other';
+      if (name === 'last-distill.json') type = 'state';
+      else if (/^distill-.*\.log$/i.test(name)) type = 'log';
+      else if (/^delta-reembed-report-.*\.json$/i.test(name)) type = 'report_json';
+      else if (/^delta-reembed-report-.*\.md$/i.test(name)) type = 'report_md';
+      else if (/^reembed-progress-.*\.(json|jsonl)$/i.test(name)) type = 'progress';
+      else if (/\.snapshot$/i.test(name)) type = 'snapshot';
+      mapped.push({
+        name,
+        path: fullPath,
+        type,
+        modifiedAt: info.mtime.toISOString(),
+        sizeBytes: info.size,
+      });
+    }
+    return mapped.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 20);
+  }
+
+  private async writeOperationalSummary(stateOverride?: DistillState | null): Promise<void> {
+    const summaryPath = path.join(this.snapshotDir, 'distill-operational-summary.json');
+    const summary = {
+      generatedAt: new Date().toISOString(),
+      snapshotDir: this.snapshotDir,
+      state: stateOverride ?? await this.loadState(),
+      latestArtifacts: await this.listOperationalArtifacts(),
+    } satisfies DistillOperationalSummary;
+    await writeFile(summaryPath, JSON.stringify(summary, null, 2));
   }
 }

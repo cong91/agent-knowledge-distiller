@@ -49,6 +49,7 @@ export interface DistillReport {
   totalNoiseDeleted?: number;
   totalMarkedDistilled?: number;
   totalReembedded?: number;
+  totalTruncated?: number;
   byAgent: Record<
     string,
     {
@@ -60,6 +61,11 @@ export interface DistillReport {
         score: number;
         category: string;
         enrichedText?: string;
+        embeddingMetadata?: {
+          truncated: boolean;
+          originalChars: number;
+          embeddedChars: number;
+        };
       }>;
     }
   >;
@@ -75,4 +81,19 @@ export interface DistillState {
   sourceCountBefore: number;
   sourceCountAfter: number;
   totalDistilledEver: number;
+}
+
+export interface DistillArtifactEntry {
+  name: string;
+  path: string;
+  type: 'state' | 'log' | 'report_json' | 'report_md' | 'progress' | 'snapshot' | 'other';
+  modifiedAt: string;
+  sizeBytes: number;
+}
+
+export interface DistillOperationalSummary {
+  generatedAt: string;
+  snapshotDir: string;
+  state: DistillState | null;
+  latestArtifacts: DistillArtifactEntry[];
 }

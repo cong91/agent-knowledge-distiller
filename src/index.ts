@@ -65,6 +65,7 @@ program
     const goldenCount = await qdrantService.getCount(qdrantService.goldenCollectionName).catch(() => 0);
     const distilledCount = await qdrantService.getDistilledCount();
     const state = await qdrantService.loadState();
+    const operational = await qdrantService.getOperationalSummary();
 
     console.log(chalk.cyan('\n=== Distill Status ==='));
     console.log(`Source (${qdrantService.sourceCollectionName}): ${sourceCount} points`);
@@ -80,6 +81,13 @@ program
       console.log(`  Total distilled ever: ${state.totalDistilledEver}`);
     } else {
       console.log(chalk.yellow('\nNo previous state (first run pending)'));
+    }
+
+    if (operational.latestArtifacts.length > 0) {
+      console.log(chalk.yellow('\nOperational artifacts:'));
+      for (const item of operational.latestArtifacts.slice(0, 8)) {
+        console.log(`  - [${item.type}] ${item.name} (${item.modifiedAt})`);
+      }
     }
   });
 
